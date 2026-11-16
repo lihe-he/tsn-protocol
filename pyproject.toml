@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tsn-protocol"
+version = "0.1.0"
+description = "运动的服务端协议 SDK：可换版本、可换学校、可当库用"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PH_SW" }]
+keywords = ["protocol", "http", "reverse-engineering", "sdk"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "httpx>=0.28",
+    "pycryptodome>=3.23",
+    "pydantic>=2.9",
+    "numpy>=2.0",
+    "pillow>=11.0",
+]
+
+[project.optional-dependencies]
+osm = ["osmnx>=2.0", "shapely>=2.1"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.7"]
+
+[project.scripts]
+tsn = "tsn.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
