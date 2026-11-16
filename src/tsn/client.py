@@ -63,6 +63,7 @@ class TSNClient:
         self.cfg = cfg or AppConfig.from_env()
         self._transport: Transport | None = None
         self._schools: list[School] = []
+        self._cloud_cache: dict[int, str] = {}
 
     # ── 生命周期 ──
 
@@ -119,7 +120,13 @@ class TSNClient:
 
     # ── 会话 ──
 
-    def adapter_for(self, school: School, *, app_version: str | None = None) -> ProtocolAdapter:
+    def adapter_for(
+        self,
+        school: School,
+        *,
+        app_version: str | None = None,
+        cloud_base: str | None = None,
+    ) -> ProtocolAdapter:
         version = app_version or self.cfg.__dict__.get("app_version", "") or ""
         device = self.cfg.device.model_copy(deep=True)
         ctx = AdapterContext(
@@ -127,12 +134,57 @@ class TSNClient:
             device=device,
             transport=self.transport,
             app_version=version,
-            cloud_base=school.cloud_base,
+            cloud_base=cloud_base or school.cloud_base,
         )
         return create(version, ctx)
 
+    async def resolve_cloud_base(self, school: School) -> str:
+        """确定该校租户接口真正的域名.
+
+        为什么需要这一步：
+            listSchoolDatas 返回的 lan_url 对部分学校是**校内网地址**
+            （例如 tygl.swpu.edu.cn 解析到 192.168.x.x），校外直接用会失败。
+
+        优先级：
+            1. getSchoolInfo 的 url 字段 —— 权威
+            2. https://{schoolCode}.tsnkj.com —— 平台托管规律，已验证成立
+            3. listSchoolDatas 的 lan_url —— 兜底，可能只在校内可用
+        """
+        cached = self._cloud_cache.get(school.school_id)
+        if cached:
+            return cached
+
+        # 1) 权威来源
+        if school.code:
+            try:
+                body = await self.transport.get(routes.SCHOOL_INFO_URL, {"schoolCode": school.code})
+                data = unwrap_data(body)
+                if isinstance(data, dict):
+                    host = str(data.get("url") or "").strip()
+                    if host:
+                        base = (host if host.startswith("http") else f"https://{host}").rstrip("/")
+                        self._cloud_cache[school.school_id] = base
+                        log.info("学校 %s 接口域名: %s（getSchoolInfo）", school.name, base)
+                        return base
+            except Exception as exc:  # noqa: BLE001  探测失败不应中断
+                log.debug("getSchoolInfo 失败，回退: %s", exc)
+
+        # 2) 平台托管域名规律
+        if school.code:
+            base = f"https://{school.code}.tsnkj.com"
+            self._cloud_cache[school.school_id] = base
+            log.info("学校 %s 接口域名: %s（按 schoolCode 推导）", school.name, base)
+            return base
+
+        # 3) 兜底
+        base = school.cloud_base.rstrip("/")
+        self._cloud_cache[school.school_id] = base
+        log.warning("学校 %s 域名回退到 lan_url: %s（可能只在校内可用）", school.name, base)
+        return base
+
     async def login(self, school: School, username: str, password: str) -> tuple[Account, ProtocolAdapter]:
-        adapter = self.adapter_for(school)
+        cloud = await self.resolve_cloud_base(school)
+        adapter = self.adapter_for(school, cloud_base=cloud)
         result = await adapter.login(username, password)
         adapter.ctx.uid = result.uid
         adapter.ctx.token = result.token

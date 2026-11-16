@@ -138,13 +138,14 @@ async def cmd_run(args: argparse.Namespace, cfg: AppConfig) -> int:
         if state.get("device"):
             cfg.device.model_validate(state["device"])
 
+        cloud = await client.resolve_cloud_base(school)
         ctx = AdapterContext(
             school=school,
             device=cfg.device,
             transport=client.transport,
             token=state["token"],
             uid=state.get("uid", ""),
-            cloud_base=school.cloud_base,
+            cloud_base=cloud,
         )
         adapter = create("", ctx)
 
@@ -191,13 +192,14 @@ async def cmd_status(args: argparse.Namespace, cfg: AppConfig) -> int:
 
     school = School.model_validate(state["school"])
     async with TSNClient(cfg) as client:
+        cloud = await client.resolve_cloud_base(school)
         ctx = AdapterContext(
             school=school,
             device=cfg.device,
             transport=client.transport,
             token=state["token"],
             uid=state.get("uid", ""),
-            cloud_base=school.cloud_base,
+            cloud_base=cloud,
         )
         adapter = create("", ctx)
         summary = await adapter.get_summary()

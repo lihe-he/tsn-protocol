@@ -53,6 +53,11 @@ PUBLIC: dict[str, Route] = {
     "app.upload_record":   Route("POST", "admin/analysis/addUploadRecord"),
 }
 
+# 学校元信息：不走租户域名，挂在平台 H5 域名下，无需认证。
+# 返回值里的 url 字段才是该校真正的公网接口域名
+# （listSchoolDatas 里的 lan_url 可能是内网地址，不能用）。
+SCHOOL_INFO_URL = "https://h.tsnkj.com/upms/sysSchool/getSchoolInfo"
+
 TENANT: dict[str, Route] = {
     # —— 认证 ——
     "auth.token":          Route("POST", "auth/oauth/token", encrypted=False),
@@ -99,3 +104,47 @@ def get(name: str) -> Route:
         return ALL[name]
     except KeyError:
         raise KeyError(f"未知路由: {name!r}；可用: {', '.join(sorted(ALL))}") from None
+
+
+def cloud_base_candidates(school_code: str, lan_url: str | None = None) -> list[str]:
+    """猜测租户接口的 base url，按可靠性排序.
+
+    教训：listSchoolDatas 返回的 lan_url 对某些学校是**校内网地址**
+    （例如解析到 192.168.x.x），校外访问不了。真正的域名要从
+    getSchoolInfo 的 url 字段拿，或者按 {code}.tsnkj.com 规律拼。
+
+    这里给出候选列表，由调用方逐个探测哪个能通。
+    """
+    out: list[str] = []
+    code = (school_code or "").strip()
+
+    if code:
+        out.append(f"https://{code}.tsnkj.com")
+        out.append(f"http://{code}.tsnkj.com")
+
+    if lan_url:
+        # 内网地址（10.x / 172.16-31.x / 192.168.x / .local）排在最后
+        host = lan_url.split("//")[-1].split("/")[0].split(":")[0]
+        private = (
+            host.startswith(("10.", "192.168.", "127."))
+            or host.endswith(".local")
+            or (
+                host.startswith("172.")
+                and len(host.split(".")) > 1
+                and 16 <= int(host.split(".")[1] or 0) <= 31
+            )
+        )
+        if private:
+            out.append(lan_url)
+        else:
+            out.insert(0, lan_url)
+
+    # 去重保序
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for u in out:
+        u = u.rstrip("/")
+        if u and u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return uniq
